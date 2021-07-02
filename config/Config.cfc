@@ -12,10 +12,12 @@ component {
 
 // private helpers
 	private void function _setupFeatures( settings ) {
-		settings.features.apiManager.enabled    = true;
-		settings.features.restTokenAuth.enabled = true;
+		settings.features.apiManager.enabled       = true;
+		settings.features.restTokenAuth.enabled    = true;
+		settings.features.apiCascadeDelete.enabled = true;
 
 		settings.features.dataApiQueue = settings.features.dataApiQueue ?: { enabled=true };
+		settings.features.dataApiLog   = settings.features.dataApiLog   ?: { enabled=true };
 	}
 
 	private void function _setupRestApis( required struct settings ) {

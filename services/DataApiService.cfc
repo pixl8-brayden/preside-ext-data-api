@@ -8,11 +8,16 @@ component {
 	/**
 	 * @presideRestService.inject presideRestService
 	 * @configService.inject      dataApiConfigurationService
-	 *
+	 * @dataApiLogService.inject  dataApiLogService
 	 */
-	public any function init( required any presideRestService, required any configService ) {
+	public any function init(
+		  required any presideRestService
+		, required any configService
+		, required any dataApiLogService
+	) {
 		_setPresideRestService( arguments.presideRestService );
 		_setConfigService( arguments.configService );
+		_setDataApiLogService( arguments.dataApiLogService );
 
 		return this;
 	}
@@ -104,17 +109,39 @@ component {
 	}
 
 	public struct function createRecord( required string entity, required any record ) {
-		var objectName = _getConfigService().getEntityObject( arguments.entity );
-		var dao        = $getPresideObject( objectName );
-		var namespace  = _getInterceptorNamespace();
-		var args       = {
+		var objectName       = _getConfigService().getEntityObject( arguments.entity );
+		var dao              = $getPresideObject( objectName );
+		var namespace        = _getInterceptorNamespace();
+		var logEnabled       = $getPresideObjectService().getObjectAttribute( objectName=objectName, attributeName="dataApiLogEnabled" );
+		var insertLogEnabled = $getPresideObjectService().getObjectAttribute( objectName=objectName, attributeName="dataApiInsertLogEnabled" );
+		var args             = {
 			  data                      = _prepRecordForInsertAndUpdate( arguments.entity, arguments.record )
 			, insertManyToManyRecords   = true
 			, bypassTrivialInterceptors = true
 		};
 
 		$announceInterception( "preDataApiInsertData#namespace#", { insertDataArgs=args, entity=arguments.entity, record=arguments.record } );
-		var newId = dao.insertData( argumentCollection=args );
+		if ( $helpers.isTrue( logEnabled ) || $helpers.isTrue( insertLogEnabled ) ) {
+			transaction {
+				try {
+					var newId = dao.insertData( argumentCollection=args );
+
+					_getDataApiLogService().logAction(
+						  action     = "insert"
+						, recordId   = newId
+						, objectName = objectName
+						, namespace  = namespace
+					);
+
+					transaction action="commit";
+				} catch ( any e ) {
+					$raiseError( e );
+					transaction action="rollback";
+				}
+			}
+		} else {
+			var newId = dao.insertData( argumentCollection=args );
+		}
 		$announceInterception( "postDataApiInsertData#namespace#", { insertDataArgs=args, entity=arguments.entity, record=arguments.record, newId=newId } );
 
 		return getSingleRecord( arguments.entity, newId, [] );
@@ -140,17 +167,41 @@ component {
 	}
 
 	public any function updateSingleRecord( required string entity, required struct data, required string recordId ) {
-		var objectName = _getConfigService().getEntityObject( arguments.entity );
-		var dao        = $getPresideObject( objectName );
-		var namespace  = _getInterceptorNamespace();
-		var args       = {
+		var objectName       = _getConfigService().getEntityObject( arguments.entity );
+		var dao              = $getPresideObject( objectName );
+		var namespace        = _getInterceptorNamespace();
+		var logEnabled       = $getPresideObjectService().getObjectAttribute( objectName=objectName, attributeName="dataApiLogEnabled" );
+		var updateLogEnabled = $getPresideObjectService().getObjectAttribute( objectName=objectName, attributeName="dataApiUpdateLogEnabled" );
+		var args             = {
 			  id                      = arguments.recordId
 			, data                    = _prepRecordForInsertAndUpdate( arguments.entity, arguments.data )
 			, updateManyToManyRecords = true
 		};
 
 		$announceInterception( "preDataApiUpdateData#namespace#", { updateDataArgs=args, entity=arguments.entity, recordId=arguments.recordId, data=arguments.data } );
-		var recordsUpdated = dao.updateData( argumentCollection=args );
+
+		if ( $helpers.isTrue( logEnabled ) || $helpers.isTrue( updateLogEnabled ) ) {
+			transaction {
+				try {
+					var recordsUpdated = dao.updateData( argumentCollection=args );
+
+					_getDataApiLogService().logAction(
+						  action     = "update"
+						, recordId   = arguments.recordId
+						, objectName = objectName
+						, namespace  = namespace
+					);
+
+					transaction action="commit";
+				} catch ( any e ) {
+					$raiseError( e );
+					transaction action="rollback";
+				}
+			}
+		} else {
+			var recordsUpdated = dao.updateData( argumentCollection=args );
+		}
+
 		$announceInterception( "postDataApiUpdateData#namespace#", { updateDataArgs=args, entity=arguments.entity, recordId=arguments.recordId, data=arguments.data } );
 
 
@@ -158,12 +209,37 @@ component {
 	}
 
 	public numeric function deleteSingleRecord( required string entity, required string recordId ) {
-		var dao       = $getPresideObject( _getConfigService().getEntityObject( arguments.entity ) );
-		var namespace = _getInterceptorNamespace();
-		var args      = { id=arguments.recordId };
+		var objName          = _getConfigService().getEntityObject( arguments.entity );
+		var dao              = $getPresideObject( objName );
+		var namespace        = _getInterceptorNamespace();
+		var args             = { id=arguments.recordId };
+		var logEnabled       = $getPresideObjectService().getObjectAttribute( objectName=objName, attributeName="dataApiLogEnabled" );
+		var deleteLogEnabled = $getPresideObjectService().getObjectAttribute( objectName=objName, attributeName="dataApiDeleteLogEnabled" );
 
 		$announceInterception( "preDataApiDeleteData#namespace#", { deleteDataArgs=args, entity=arguments.entity, recordId=arguments.recordId } );
-		var recordsDeleted = dao.deleteData( argumentCollection=args );
+
+		if ( $helpers.isTrue( logEnabled ) || $helpers.isTrue( deleteLogEnabled ) ) {
+			transaction {
+				try {
+					_getDataApiLogService().logAction(
+						  action     = "delete"
+						, recordId   = arguments.recordId
+						, objectName = objName
+						, namespace  = namespace
+					);
+
+					var recordsDeleted = dao.deleteData( argumentCollection=args );
+
+					transaction action="commit";
+				} catch ( any e ) {
+					$raiseError( e );
+					transaction action="rollback";
+				}
+			}
+		} else {
+			var recordsDeleted = dao.deleteData( argumentCollection=args );
+		}
+
 		$announceInterception( "postDataApiDeleteData#namespace#", { deleteDataArgs=args, entity=arguments.entity, recordId=arguments.recordId } );
 
 		return recordsDeleted;
@@ -394,4 +470,10 @@ component {
 		_configService = arguments.configService;
 	}
 
+	private any function _getDataApiLogService() {
+		return _dataApiLogService;
+	}
+	private void function _setDataApiLogService( required any dataApiLogService ) {
+		_dataApiLogService = arguments.dataApiLogService;
+	}
 }
